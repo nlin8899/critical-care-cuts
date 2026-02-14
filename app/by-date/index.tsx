@@ -1,30 +1,79 @@
 import { Link } from "expo-router";
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from "firebase/firestore";
+import { useEffect, useState } from "react";
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import TopHeader from "../../components/TopHeader";
+import { db } from "../../lib/firebase";
+import { parseYMD, sequenceForToday, weekdayIndex } from "../../lib/schedule";
 
 
-type Cut = { id: string; dateLabel: string; title: string; preview: string };
+type AppConfig = {
+  shipDate: string;
+  totalCuts: number;
+  holidays?: string[];
+};
 
-const FAKE_CUTS: Cut[] = [
-  {
-    id: "1",
-    dateLabel: "Today's Cut: Feb 3, 2026",
-    title: "US Assisted Pulse Checks",
-    preview:
-      "The accuracy of manual pulse check has been reported to be as low as 54%...",
-  },
-  {
-    id: "2",
-    dateLabel: "Feb 4, 2026",
-    title: "Primary Survey: Airway",
-    preview: "A is for Airway. Is your patient protecting their airway? ...",
-  },
-];
+type Cut = {
+  id: string;
+  sequence: number;
+  title: string;
+  body: string;
+};
 
 export default function ByDateScreen() {
+
+  const [loading, setLoading] = useState(true);
+  const [todayCut, setTodayCut] = useState<Cut | null>(null);
+  const [cuts, setCuts] = useState<Cut[]>([]);
+
+  
+  useEffect(() => {
+    async function load() {
+      try {
+        const configSnap = await getDoc(doc(db, "config", "app"));
+        const cfg = configSnap.data() as AppConfig;
+
+        const ship = parseYMD(cfg.shipDate);
+        const today = new Date();
+        const dayIdx = weekdayIndex(ship, today);
+        const seq = sequenceForToday(dayIdx, cfg.totalCuts);
+        
+        const q = query(collection(db, "cuts"), where("sequence", "==", seq), limit(1));
+        const snap = await getDocs(q);
+        const row = snap.docs[0];
+
+        setTodayCut(row ? ({ id: row.id, ...(row.data() as any) } as Cut) : null);
+
+        const listQ = query(collection(db, "cuts"), orderBy("sequence", "asc"));
+        const listSnap = await getDocs(listQ);
+        setCuts(listSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Cut[]);
+      
+      } finally {
+        setLoading(false);}} 
+        
+        load();
+      }, []);
+
+      
   return (
   <View style={styles.screen}>
     <TopHeader />
+    
+  {loading ? (
+      <Text style={{ padding: 16 }}>Loading…</Text>
+    ) : !todayCut ? (
+      <Text style={{ padding: 16 }}>No cut found.</Text>
+    ) : (
+      <View style={{ padding: 16 }}>
+        <Text style={{ fontSize: 20, fontWeight: "700" }}>
+        {todayCut.title}
+        </Text>
+        
+        <Text style={{ marginTop: 10, lineHeight: 22 }}>
+          {todayCut.body}
+        </Text>
+      </View>
+    )}
 
     {/* Segmented control (UI only) */}
     <View style={styles.segmentWrap}>
@@ -43,17 +92,19 @@ export default function ByDateScreen() {
 
     {/* List */}
     <FlatList
-      data={FAKE_CUTS}
+      data={cuts}
       keyExtractor={(item) => item.id}
       contentContainerStyle={{ paddingBottom: 20 }}
       renderItem={({ item, index }) => (
         <View style={styles.card}>
-          <Text style={styles.dateLabel}>{item.dateLabel}</Text>
+        <Text style={styles.dateLabel}>
+          {index === 0 ? "Today's Cut" : `Cut #${item.sequence}`}
+        </Text>
 
           {index === 0 && <View style={styles.todayBar} />}
 
           <Text style={styles.title}>{item.title}</Text>
-          <Text style={styles.preview}>{item.preview}</Text>
+          <Text style={styles.preview}>{item.body}</Text>
 
           <Link
             href={{ pathname: "/by-date/[id]", params: { id: item.id } }}
